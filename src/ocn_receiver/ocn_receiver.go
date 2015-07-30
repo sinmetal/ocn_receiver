@@ -12,7 +12,7 @@ import (
 )
 
 func init() {
-	http.HandleFunc("/notify", handler)
+	http.HandleFunc("/notify", handlerOCNReceiver)
 }
 
 type OCNMessage struct {
@@ -39,7 +39,7 @@ type ACL struct {
 	EntityId string
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
+func handlerOCNReceiver(w http.ResponseWriter, r *http.Request) {
 	ctx := appengine.NewContext(r)
 
 	for k, v := range r.Header {
