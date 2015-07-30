@@ -1,16 +1,25 @@
 package ocn_receiver
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
+	"time"
 
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/appengine"
 
+	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/appengine/log"
+	"google.golang.org/appengine/taskqueue"
 	"google.golang.org/appengine/urlfetch"
+
+	"github.com/pborman/uuid"
 )
+
+const INSTANCE_NAME = "conimg"
 
 func init() {
 	http.HandleFunc("/api/1/gcemanager", handlerGceManager)
@@ -39,37 +48,63 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 		return
 	}
+	count := 0
 	for _, item := range il.Items {
-		log.Infof(ctx, "id = %s, name = %s", item.Id, item.Name)
+		log.Infof(ctx, "id = %s, name = %s, creationTimestamp = %s", item.Id, item.Name, item.CreationTimestamp)
+		if strings.HasPrefix(item.Name, INSTANCE_NAME) {
+			count++
+		}
+	}
+	if count > 80 {
+		log.Infof(ctx, "Create a new instance is canceled.")
+		w.WriteHeader(200)
+		return
 	}
 
-	ds := compute.NewDisksService(s)
-	d := &compute.Disk{
-		Name:           "hoge",
-		SourceSnapshot: "https://www.googleapis.com/compute/v1/projects/cp300demo1/global/snapshots/fluentd",
-		SizeGb:         10,
-		Type:           "https://www.googleapis.com/compute/v1/projects/cp300demo1/zones/us-central1-b/diskTypes/pd-standard",
-		Zone:           "https://www.googleapis.com/compute/v1/projects/cp300demo1/zones/us-central1-b",
-	}
-	ope, err := ds.Insert("cp300demo1", "us-central1-b", d).Do()
+	qs, err := taskqueue.QueueStats(ctx, []string{"pull-queue"})
 	if err != nil {
-		log.Errorf(ctx, "ERROR insert disk: %s", err)
+		log.Errorf(ctx, "ERROR get queue stats: %s", err)
 		w.WriteHeader(500)
 		return
 	}
-	log.Infof(ctx, "create disk. ope.name = %s, ope.selfLink = %s", ope.Name, ope.SelfLink)
+	if count > qs[0].Tasks {
+		log.Infof(ctx, "instance count %d > task count %d", count, qs[0].Tasks)
+		w.WriteHeader(200)
+		return
+	}
+
+	names := make([]string, 0)
+	for i := count; i < qs[0].Tasks; i++ {
+		name, err := createInstance(ctx, is)
+		if err != nil {
+			time.Sleep(3 * time.Second)
+		}
+		names = append(names, name)
+	}
+
+	w.WriteHeader(200)
+	fmt.Fprint(w, names)
+}
+
+func createInstance(ctx context.Context, is *compute.InstancesService) (string, error) {
+	name := INSTANCE_NAME + "-" + uuid.New()
+	log.Infof(ctx, "instance name = %s", name)
 
 	newIns := &compute.Instance{
-		Name:        "hoge",
+		Name:        name,
 		Zone:        "https://www.googleapis.com/compute/v1/projects/cp300demo1/zones/us-central1-b",
 		MachineType: "https://www.googleapis.com/compute/v1/projects/cp300demo1/zones/us-central1-b/machineTypes/n1-standard-1",
 		Disks: []*compute.AttachedDisk{
 			&compute.AttachedDisk{
 				AutoDelete: true,
 				Boot:       true,
-				DeviceName: "hoge",
+				DeviceName: name,
 				Mode:       "READ_WRITE",
-				Source:     "https://www.googleapis.com/compute/v1/projects/cp300demo1/zones/us-central1-b/disks/hoge",
+				InitializeParams: &compute.AttachedDiskInitializeParams{
+					SourceImage: "https://www.googleapis.com/compute/v1/projects/cp300demo1/global/images/cp300-06-image",
+					DiskType:    "https://www.googleapis.com/compute/v1/projects/cp300demo1/zones/us-central1-b/diskTypes/pd-standard",
+					DiskSizeGb:  10,
+				},
 			},
 		},
 		CanIpForward: false,
@@ -101,14 +136,12 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 			Preemptible:       true,
 		},
 	}
-	ope, err = is.Insert("cp300demo1", "us-central1-b", newIns).Do()
+	ope, err := is.Insert("cp300demo1", "us-central1-b", newIns).Do()
 	if err != nil {
 		log.Errorf(ctx, "ERROR insert instance: %s", err)
-		w.WriteHeader(500)
-		return
+		return "", err
 	}
-	log.Infof(ctx, "create instance ope.name = %s, ope.selfLink = %s", ope.Name, ope.SelfLink)
+	log.Infof(ctx, "create instance ope.name = %s, ope.targetLink = %s, ope.Status = %s", ope.Name, ope.TargetLink, ope.Status)
 
-	w.WriteHeader(200)
-	w.Write([]byte("done!"))
+	return name, nil
 }
