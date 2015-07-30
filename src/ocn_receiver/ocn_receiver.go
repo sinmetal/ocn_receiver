@@ -76,7 +76,18 @@ func handlerOCNReceiver(w http.ResponseWriter, r *http.Request) {
 		}
 		_, err = taskqueue.Add(ctx, t, "pull-queue")
 		if err != nil {
-			log.Errorf(ctx, "ERROR task queue add: %s", err)
+			log.Errorf(ctx, "ERROR pull-queue task add: %s", err)
+			w.WriteHeader(500)
+			return
+		}
+
+		_, err = taskqueue.Add(ctx,
+			&taskqueue.Task{
+				Path: "/api/1/gcemanager",
+			},
+			"gce-manager")
+		if err != nil {
+			log.Errorf(ctx, "ERROR gce-manager task add: %s", err)
 			w.WriteHeader(500)
 			return
 		}
