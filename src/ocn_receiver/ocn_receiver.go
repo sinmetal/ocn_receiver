@@ -55,6 +55,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Infof(ctx, string(body))
 
+	if r.Header.Get("X-Goog-Resource-State") == "sync" {
+		w.WriteHeader(200)
+		return
+	}
+
 	var m OCNMessage
 	err = json.NewDecoder(bytes.NewReader(body)).Decode(&m)
 	if err != nil {
