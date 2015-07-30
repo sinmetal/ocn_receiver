@@ -1,11 +1,14 @@
 application: cp300demo1
-module: default
-version: ocn
+module: ocn-receiver
+version: 20150730a
 runtime: go
 api_version: go1
 instance_class: F1
 automatic_scaling:
 
 handlers:
+- url: /
+  static_files: index.html
+  upload: index.html
 - url: /.*
   script: _go_app
