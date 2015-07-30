@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+    "math"
 
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/appengine"
@@ -55,7 +56,8 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 			count++
 		}
 	}
-	if count > 80 {
+    threshold := 3
+	if count > threshold {
 		log.Infof(ctx, "Create a new instance is canceled.")
 		w.WriteHeader(200)
 		return
@@ -73,8 +75,9 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+    threshold = math.MinInt32(threshold, qs[0].Tasks)
 	names := make([]string, 0)
-	for i := count; i < qs[0].Tasks; i++ {
+	for i := count; i < threshold; i++ {
 		name, err := createInstance(ctx, is)
 		if err != nil {
 			time.Sleep(3 * time.Second)
