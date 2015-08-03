@@ -2,10 +2,10 @@ package ocn_receiver
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
-    "math"
 
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/appengine"
@@ -17,6 +17,7 @@ import (
 	"google.golang.org/appengine/taskqueue"
 	"google.golang.org/appengine/urlfetch"
 
+	"appengine/taskqueue"
 	"github.com/pborman/uuid"
 )
 
@@ -56,7 +57,7 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 			count++
 		}
 	}
-    threshold := 3
+	threshold := 3
 	if count > threshold {
 		log.Infof(ctx, "Create a new instance is canceled.")
 		w.WriteHeader(200)
@@ -69,13 +70,20 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 		return
 	}
+	if qs[0].Tasks < 1 {
+		log.Infof(ctx, "gce-manager purge.")
+		err = taskqueue.Purge(ctx, "gce-manager")
+		if err != nil {
+			log.Warningf(ctx, "missing gce-manager purge. err = %s", err)
+		}
+	}
 	if count > qs[0].Tasks {
 		log.Infof(ctx, "instance count %d > task count %d", count, qs[0].Tasks)
 		w.WriteHeader(200)
 		return
 	}
 
-    threshold = math.MinInt32(threshold, qs[0].Tasks)
+	threshold = math.MinInt32(threshold, qs[0].Tasks)
 	names := make([]string, 0)
 	for i := count; i < threshold; i++ {
 		name, err := createInstance(ctx, is)
