@@ -7,7 +7,7 @@ queue:
   - user_email: shingo.ishimura@topgate.co.jp
   - writer_email: shingo.ishimura@topgate.co.jp
 - name: gce-manager
-  rate: 50/s
+  rate: 1/m
   bucket_size: 1
   max_concurrent_requests: 1
   target: ocn-receiver
