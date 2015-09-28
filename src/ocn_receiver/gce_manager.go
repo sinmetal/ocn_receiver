@@ -3,12 +3,17 @@ package ocn_receiver
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"google.golang.org/api/compute/v1"
 	"google.golang.org/appengine"
 
+	"golang.org/x/net/context"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/appengine/log"
@@ -25,12 +30,15 @@ func init() {
 func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 	ctx := appengine.NewContext(r)
 
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
 	client := &http.Client{
 		Transport: &oauth2.Transport{
 			Source: google.AppEngineTokenSource(ctx, compute.ComputeScope),
-			Base:   &urlfetch.Transport{Context: ctx},
+			Base:   &urlfetch.Transport{Context: ctxWithTimeout},
 		},
 	}
+	defer cancel()
+
 	s, err := compute.New(client)
 	if err != nil {
 		log.Errorf(ctx, "ERROR compute.New: %s", err)
@@ -80,8 +88,18 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 	}
 
 	threshold = int(math.Min(float64(threshold), float64(qs[0].Tasks)))
-	igs := compute.NewInstanceGroupManagersService(s)
-	ope, err := igs.Resize("cp300demo1", "us-central1-b", "preemptibility-group", int64(threshold)).Do()
+	sizeParam := r.URL.Query().Get("instance-group-size")
+	if len(sizeParam) > 0 {
+		size, err := strconv.Atoi(sizeParam)
+		if err != nil {
+			log.Warningf(ctx, "invalid instance-group-size. %v", err)
+		} else {
+			log.Infof(ctx, "set instance-group-size! %s", size)
+			threshold = size
+		}
+	}
+
+	ope, err := resizeInstanceGroup(ctx, s, threshold)
 	if err != nil {
 		log.Errorf(ctx, "ERROR resize instance group: %s", err)
 		w.WriteHeader(500)
@@ -91,4 +109,40 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(200)
 	fmt.Fprint(w, threshold)
+}
+
+func resizeInstanceGroup(ctx context.Context, service *compute.Service, threshold int) (*compute.Operation, error) {
+	var ope *compute.Operation
+	var err error
+	count := 0
+	for {
+		igs := compute.NewInstanceGroupManagersService(service)
+		ope, err = igs.Resize("cp300demo1", "us-central1-b", "preemptibility-group", int64(threshold)).Do()
+		if err != nil {
+			count++
+			log.Infof(ctx, "retry count = %d", count)
+
+			if count > 3 {
+				return ope, err
+			}
+
+			if uerr, ok := err.(*url.Error); ok {
+				log.Warningf(ctx, "err is URL Error %s, Compute Engine Instance Group Resize Error. try count = %d", uerr.Error(), count)
+				time.Sleep(time.Duration(rand.Int31n(8000)) * time.Millisecond)
+				continue
+			}
+
+			if appengine.IsTimeoutError(err) {
+				log.Warningf(ctx, "appengine.IsTimeoutError %s, Compute Engine Instance Group Resize Timeout. try count = %s", err.Error(), count)
+				time.Sleep(time.Duration(rand.Int31n(8000)) * time.Millisecond)
+				continue
+			}
+
+			return ope, err
+		}
+
+		log.Infof(ctx, "%v", ope)
+		return ope, err
+	}
+	return ope, err
 }
