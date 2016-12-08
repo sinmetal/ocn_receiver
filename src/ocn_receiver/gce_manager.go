@@ -60,7 +60,7 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 			count++
 		}
 	}
-	threshold := 50
+	threshold := 1000
 	if count > threshold {
 		log.Infof(ctx, "Create a new instance is canceled.")
 		w.WriteHeader(200)
@@ -88,7 +88,7 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 	}
 
 	threshold = int(math.Min(float64(threshold), float64(qs[0].Tasks)))
-	sizeParam := r.URL.Query().Get("instance-group-size")
+	sizeParam := r.FormValue("instance-group-size")
 	if len(sizeParam) > 0 {
 		size, err := strconv.Atoi(sizeParam)
 		if err != nil {
