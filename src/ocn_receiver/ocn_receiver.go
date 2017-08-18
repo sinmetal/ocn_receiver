@@ -83,7 +83,8 @@ func handlerOCNReceiver(w http.ResponseWriter, r *http.Request) {
 
 		_, err = taskqueue.Add(ctx,
 			&taskqueue.Task{
-				Path: "/api/1/gcemanager",
+				Path:  "/api/1/gcemanager",
+				Delay: 3 * time.Second,
 			},
 			"gce-manager")
 		if err != nil {

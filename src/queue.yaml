@@ -2,12 +2,9 @@ queue:
 - name: pull-queue
   mode: pull
   acl:
-  - user_email: 800106096694-compute@developer.gserviceaccount.com
-  - writer_email: 800106096694-compute@developer.gserviceaccount.com
-  - user_email: shingo.ishimura@topgate.co.jp
-  - writer_email: shingo.ishimura@topgate.co.jp
+  - user_email: 574368750890-compute@developer.gserviceaccount.com
+  - writer_email: 574368750890-compute@developer.gserviceaccount.com
 - name: gce-manager
-  rate: 50/s
+  rate: 1/m
   bucket_size: 1
   max_concurrent_requests: 1
-  target: ocn-receiver

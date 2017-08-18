@@ -3,7 +3,10 @@ package ocn_receiver
 import (
 	"fmt"
 	"math"
+	"math/rand"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -16,9 +19,6 @@ import (
 	"google.golang.org/appengine/log"
 	"google.golang.org/appengine/taskqueue"
 	"google.golang.org/appengine/urlfetch"
-
-	"appengine/taskqueue"
-	"github.com/pborman/uuid"
 )
 
 const INSTANCE_NAME = "conimg"
@@ -30,12 +30,15 @@ func init() {
 func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 	ctx := appengine.NewContext(r)
 
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 30*time.Second)
 	client := &http.Client{
 		Transport: &oauth2.Transport{
 			Source: google.AppEngineTokenSource(ctx, compute.ComputeScope),
-			Base:   &urlfetch.Transport{Context: ctx},
+			Base:   &urlfetch.Transport{Context: ctxWithTimeout},
 		},
 	}
+	defer cancel()
+
 	s, err := compute.New(client)
 	if err != nil {
 		log.Errorf(ctx, "ERROR compute.New: %s", err)
@@ -43,7 +46,7 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	is := compute.NewInstancesService(s)
-	ilc := is.List("cp300demo1", "us-central1-b")
+	ilc := is.List(appengine.AppID(ctx), "us-central1-b")
 	il, err := ilc.Do()
 	if err != nil {
 		log.Errorf(ctx, "ERROR instances list: %s", err)
@@ -57,7 +60,7 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 			count++
 		}
 	}
-	threshold := 3
+	threshold := 64
 	if count > threshold {
 		log.Infof(ctx, "Create a new instance is canceled.")
 		w.WriteHeader(200)
@@ -70,6 +73,7 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
 		return
 	}
+	log.Infof(ctx, "task count = %d", qs[0].Tasks)
 	if qs[0].Tasks < 1 {
 		log.Infof(ctx, "gce-manager purge.")
 		err = taskqueue.Purge(ctx, "gce-manager")
@@ -83,76 +87,63 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	threshold = math.MinInt32(threshold, qs[0].Tasks)
-	names := make([]string, 0)
-	for i := count; i < threshold; i++ {
-		name, err := createInstance(ctx, is)
+	threshold = int(math.Min(float64(threshold), float64(qs[0].Tasks)))
+	sizeParam := r.FormValue("instance-group-size")
+	if len(sizeParam) > 0 {
+		size, err := strconv.Atoi(sizeParam)
 		if err != nil {
-			time.Sleep(3 * time.Second)
+			log.Warningf(ctx, "invalid instance-group-size. %v", err)
+		} else {
+			log.Infof(ctx, "set instance-group-size! %s", size)
+			threshold = size
 		}
-		names = append(names, name)
 	}
+
+	ope, err := resizeInstanceGroup(ctx, s, threshold)
+	if err != nil {
+		log.Errorf(ctx, "ERROR resize instance group: %s", err)
+		w.WriteHeader(500)
+		return
+	}
+	log.Infof(ctx, "resize instance group. ope.name = %s, ope.targetLink = %s, ope.Status = %s, size = %d", ope.Name, ope.TargetLink, ope.Status, threshold)
 
 	w.WriteHeader(200)
-	fmt.Fprint(w, names)
+	fmt.Fprint(w, threshold)
 }
 
-func createInstance(ctx context.Context, is *compute.InstancesService) (string, error) {
-	name := INSTANCE_NAME + "-" + uuid.New()
-	log.Infof(ctx, "instance name = %s", name)
+func resizeInstanceGroup(ctx context.Context, service *compute.Service, threshold int) (*compute.Operation, error) {
+	const retryCount = 3
+	var ope *compute.Operation
+	var err error
+	count := 0
+	for {
+		igs := compute.NewInstanceGroupManagersService(service)
+		ope, err = igs.Resize(appengine.AppID(ctx), "us-central1-b", "preemptibility-group", int64(threshold)).Do()
+		if err != nil {
+			count++
+			log.Infof(ctx, "retry count = %d", count)
 
-	newIns := &compute.Instance{
-		Name:        name,
-		Zone:        "https://www.googleapis.com/compute/v1/projects/cp300demo1/zones/us-central1-b",
-		MachineType: "https://www.googleapis.com/compute/v1/projects/cp300demo1/zones/us-central1-b/machineTypes/n1-standard-1",
-		Disks: []*compute.AttachedDisk{
-			&compute.AttachedDisk{
-				AutoDelete: true,
-				Boot:       true,
-				DeviceName: name,
-				Mode:       "READ_WRITE",
-				InitializeParams: &compute.AttachedDiskInitializeParams{
-					SourceImage: "https://www.googleapis.com/compute/v1/projects/cp300demo1/global/images/cp300-06-image",
-					DiskType:    "https://www.googleapis.com/compute/v1/projects/cp300demo1/zones/us-central1-b/diskTypes/pd-standard",
-					DiskSizeGb:  10,
-				},
-			},
-		},
-		CanIpForward: false,
-		NetworkInterfaces: []*compute.NetworkInterface{
-			&compute.NetworkInterface{
-				Network: "https://www.googleapis.com/compute/v1/projects/cp300demo1/global/networks/default",
-				AccessConfigs: []*compute.AccessConfig{
-					&compute.AccessConfig{
-						Name: "External NAT",
-						Type: "ONE_TO_ONE_NAT",
-					},
-				},
-			},
-		},
-		ServiceAccounts: []*compute.ServiceAccount{
-			&compute.ServiceAccount{
-				Email: "default",
-				Scopes: []string{
-					compute.ComputeScope,
-					compute.DevstorageFullControlScope,
-					"https://www.googleapis.com/auth/taskqueue",
-					"https://www.googleapis.com/auth/logging.write",
-				},
-			},
-		},
-		Scheduling: &compute.Scheduling{
-			AutomaticRestart:  false,
-			OnHostMaintenance: "TERMINATE",
-			Preemptible:       true,
-		},
-	}
-	ope, err := is.Insert("cp300demo1", "us-central1-b", newIns).Do()
-	if err != nil {
-		log.Errorf(ctx, "ERROR insert instance: %s", err)
-		return "", err
-	}
-	log.Infof(ctx, "create instance ope.name = %s, ope.targetLink = %s, ope.Status = %s", ope.Name, ope.TargetLink, ope.Status)
+			if count > retryCount {
+				return ope, err
+			}
 
-	return name, nil
+			if uerr, ok := err.(*url.Error); ok {
+				log.Warningf(ctx, "err is URL Error %s, Compute Engine Instance Group Resize Error. try count = %d", uerr.Error(), count)
+				time.Sleep(time.Duration(rand.Int31n(8000)) * time.Millisecond)
+				continue
+			}
+
+			if appengine.IsTimeoutError(err) {
+				log.Warningf(ctx, "appengine.IsTimeoutError %s, Compute Engine Instance Group Resize Timeout. try count = %s", err.Error(), count)
+				time.Sleep(time.Duration(rand.Int31n(8000)) * time.Millisecond)
+				continue
+			}
+
+			return ope, err
+		}
+
+		log.Infof(ctx, "%v", ope)
+		return ope, err
+	}
+	return ope, err
 }
