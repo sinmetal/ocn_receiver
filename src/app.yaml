@@ -1,5 +1,4 @@
-application: cp300demo1
-module: ocn-receiver
+application: sinmetal-gae-pullqueue-gce
 version: 20150730a
 runtime: go
 api_version: go1
@@ -10,5 +9,8 @@ handlers:
 - url: /
   static_files: index.html
   upload: index.html
+- url: /googleed0eded6dfbf426c.html
+  static_files: googleed0eded6dfbf426c.html
+  upload: googleed0eded6dfbf426c.html
 - url: /.*
   script: _go_app

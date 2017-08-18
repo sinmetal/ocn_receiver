@@ -46,7 +46,7 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	is := compute.NewInstancesService(s)
-	ilc := is.List("cp300demo1", "us-central1-b")
+	ilc := is.List(appengine.AppID(ctx), "us-central1-b")
 	il, err := ilc.Do()
 	if err != nil {
 		log.Errorf(ctx, "ERROR instances list: %s", err)
@@ -117,7 +117,7 @@ func resizeInstanceGroup(ctx context.Context, service *compute.Service, threshol
 	count := 0
 	for {
 		igs := compute.NewInstanceGroupManagersService(service)
-		ope, err = igs.Resize("cp300demo1", "us-central1-b", "preemptibility-group", int64(threshold)).Do()
+		ope, err = igs.Resize(appengine.AppID(ctx), "us-central1-b", "preemptibility-group", int64(threshold)).Do()
 		if err != nil {
 			count++
 			log.Infof(ctx, "retry count = %d", count)
