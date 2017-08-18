@@ -60,7 +60,7 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 			count++
 		}
 	}
-	threshold := 1000
+	threshold := 64
 	if count > threshold {
 		log.Infof(ctx, "Create a new instance is canceled.")
 		w.WriteHeader(200)
