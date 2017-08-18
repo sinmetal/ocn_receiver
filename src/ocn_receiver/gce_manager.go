@@ -112,6 +112,7 @@ func handlerGceManager(w http.ResponseWriter, r *http.Request) {
 }
 
 func resizeInstanceGroup(ctx context.Context, service *compute.Service, threshold int) (*compute.Operation, error) {
+	const retryCount = 3
 	var ope *compute.Operation
 	var err error
 	count := 0
@@ -122,7 +123,7 @@ func resizeInstanceGroup(ctx context.Context, service *compute.Service, threshol
 			count++
 			log.Infof(ctx, "retry count = %d", count)
 
-			if count > 3 {
+			if count > retryCount {
 				return ope, err
 			}
 
